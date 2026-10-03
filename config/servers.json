@@ -1,0 +1,77 @@
+{
+  "development": {
+    "connector": [
+      {"id": "connector-server-1", "host": "0.0.0.0", "port": 5150, "clientPort": 5010, "frontend": true}
+    ],
+    "bjl": [
+      {"id": "bjl-server-1", "host": "127.0.0.1", "port": 5250}
+    ],
+    "lh": [
+      {"id": "lh-server-1", "host": "127.0.0.1", "port": 5251, "lh": 1}
+    ],
+    "nn": [
+      {"id": "nn-server-1", "host": "127.0.0.1", "port": 5252, "nn": 1}
+    ],
+    "dx": [
+      {"id": "dx-server-1", "host": "127.0.0.1", "port": 5253, "dx": 1}
+    ],
+    "tts": [
+      {"id": "tts-server-1", "host": "127.0.0.1", "port": 5254, "tts": 1}
+    ],
+    "dt": [
+      {"id": "dt-server-1", "host": "127.0.0.1", "port": 5281, "dt": 1}
+    ],
+    "arena": [
+      { "id": "arena-server-1", "host": "127.0.0.1", "port": 5652, "arena": 1 }   
+    ],
+    "auth": [
+      {"id": "auth-server-1", "host": "127.0.0.1", "port": 5650}
+    ],
+    "gate": [
+      {"id": "gate-server-1", "host": "0.0.0.0", "clientPort": 5014, "frontend": true}
+    ]
+  },
+  "production": {
+    "connector": [
+      {"id": "connector-server-1", "host": "127.0.0.1", "port": 3150, "clientPort": 3010, "frontend": true},
+      {"id": "connector-server-2", "host": "127.0.0.1", "port": 3151, "clientPort": 3011, "frontend": true},
+      {"id": "connector-server-3", "host": "127.0.0.1", "port": 3152, "clientPort": 3012, "frontend": true}
+    ],
+    "bjl": [
+      {"id": "bjl-server-1", "host": "127.0.0.1", "port": 3250, "bjlId": 1}
+    ],
+    "lh": [
+      {"id": "lh-server-1", "host": "127.0.0.1", "port": 3251, "lhId": 1}
+    ],
+    "nn": [
+      {"id": "nn-server-1", "host": "127.0.0.1", "port": 3252, "nnId": 1}
+    ],
+    "dx": [
+      {"id": "dx-server-1", "host": "127.0.0.1", "port": 3253, "dxId": 1}
+    ],
+    "tts": [
+      {"id": "tts-server-1", "host": "127.0.0.1", "port": 3254, "ttsId": 1}
+    ],
+    "xjh": [
+      {"id": "xjh-server-1", "host": "127.0.0.1", "port": 3255, "xjhId": 1}
+    ],
+    "ssc": [
+      {"id": "ssc-server-1", "host": "127.0.0.1", "port": 3256, "sscId": 1}
+    ],
+    "jsk3": [
+      {"id": "jsk3-server-1", "host": "127.0.0.1", "port": 3257, "jsk3Id": 1}
+    ],
+    "bjcs": [
+      {"id": "bjcs-server-1", "host": "127.0.0.1", "port": 3258, "bjcsId": 1}
+    ],
+    "dt": [
+      {"id": "dt-server-1", "host": "127.0.0.1", "port": 3281, "nnId": 1}
+    ],
+    "auth": [
+      {"id": "auth-server-1", "host": "127.0.0.1", "port": 3650}
+    ],
+    "gate": [
+      {"id": "gate-server-1", "host": "127.0.0.1", "clientPort": 3014, "frontend": true}
+    ]
+  }
+}

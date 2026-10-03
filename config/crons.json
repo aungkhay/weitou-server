@@ -1,0 +1,13 @@
+{
+    "development":{
+         "arena": [
+            {"id": "1", "time": "0 0 0 * * *", "action": "doXmCron.rank"},
+            {"id": "2", "time": "0 0/10 * * * *", "action": "doTotalCron.rank"}
+          ]
+    },
+    "production":{
+        "arena": [
+          {"id": "1", "time": "0 0 4 * * *", "action": "doXmCron.rank"}
+        ]
+    }
+}

@@ -1,0 +1,26 @@
+{
+    "马大哈": {
+        "appId": "9F5M6QEMz1",
+        "secret": "18462a0d29372565bd7731e0c12f480e951c3404859a1f3febfd2dbb4843930a",
+        "token": "1f83ab8dd2864ea4938a2c089754eff6",
+        "baseUrl": "https://bot.paopaochat.com"
+    },
+    "hhhot":{
+        "appId": "AvMSzREXTT",
+        "secret": "dc82ba467b616ce4477dea8c0e3cb034fc12acf6670b29793a76f2e48e72a86a",
+        "baseUrl": "https://bot.paopaochat.com",
+        "token": "8825ad9e1e6b40c38881ae39d39e604b"
+    },
+    "小富贵": {
+        "appId": "Jw4YdOSLSg",
+        "secret": "b37487662c979b6317fb9a39563c5b3381381011476e82cc92e4c4a5933cab8a",
+        "token": "d98b80eda2f3459aa7fda0b19af76bb7",
+        "baseUrl": "https://bot.paopaochat.com"
+    },
+    "小二哥": {
+        "appId": "7JxGTci4M2",
+        "secret": "2e32fa02c0c3fb3c6b4226796c8a8ac5797aeeadddcbe197f7b00ec2bc2378a6",
+        "baseUrl": "https://bot.paopaochat.com",
+        "token": "75d1234cbdc74cecaac7e9868f5db4b0"
+    }
+}

@@ -1,0 +1,34 @@
+{
+  "development": {
+     "bjl":{
+          "host": "127.0.0.1",
+          "port": "3306",
+          "database": "kx",
+          "user": "kx",
+          "password": "LKcbHTidWjh3GPPB"
+     },
+     "record":{
+          "host": "127.0.0.1",
+          "port": "3306",
+          "database": "dl",
+          "user": "dl",
+          "password": "z524d7L3dt2KnZ4p"  
+     }
+  },
+  "production": {
+     "bjl":{
+          "host": "127.0.0.1",
+          "port": "3306",
+          "database": "bjl",
+          "user": "hn6988",
+          "password": "Hnaabb@com22"
+     },
+     "record":{
+          "host": "127.0.0.1",
+          "port": "3306",
+          "database": "record",
+          "user": "hn6988",
+          "password": "Hnaabb@com22"
+     }
+  }
+}

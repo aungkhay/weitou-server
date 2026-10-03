@@ -1,0 +1,302 @@
+const virtualBetDao = require('../../dao/virtualBetDao');
+const sendChat = require('../../chat/sendChat');
+const virtualBet_token = require('../../../config/token');
+const GAMESTATE = require('../../util/gameMsg');
+
+// 🚀 核心优化 1：直接引入与 token 在同目录下的 virtualBet.json 配置文件
+// 提示：根据你原本 token 的路径 '../../config/token'，json 的相对路径应该也是一样的
+let vBetConfig = {};
+try {
+    vBetConfig = require('../../../config/virtualBet.json');
+} catch (e) {
+    console.error("[下注机器人] 未找到 virtualBet.json 配置文件，将使用代码内置兜底！", e.message);
+}
+
+module.exports = {
+    start: async function(room){
+        try{
+            if (!room || !room.roomInfo) return;
+            const rInfo = room.roomInfo;
+            const startMsgId = String(rInfo.startMsgId || '').trim();
+            
+            if (!/^\d+$/.test(startMsgId)) {
+                console.warn(`[下注机器人] 缺少有效的开始下注图片msgId，跳过本次机器人任务，桌台=${rInfo.group_nickname}`);
+                return;
+            }
+            if (rInfo.gameState !== GAMESTATE.BET) return;
+
+            const compareMsgId = (left, right) => {
+                const leftId = BigInt(String(left));
+                const rightId = BigInt(String(right));
+                return leftId === rightId ? 0 : (leftId > rightId ? 1 : -1);
+            };
+
+            // 同一张开始下注图片可能被插件重复回调。已经启动过的图片保持幂等；
+            // 比当前会话更早的历史图片也不能重新拉起机器人。
+            if (room._virtualStartMsgId) {
+                const order = compareMsgId(startMsgId, room._virtualStartMsgId);
+                if (order === 0) {
+                    console.log(`[下注机器人] 忽略重复开始图片，msgId=${startMsgId}`);
+                    return;
+                }
+                if (order < 0) {
+                    console.log(`[下注机器人] 忽略较早开始图片，current=${room._virtualStartMsgId}, msgId=${startMsgId}`);
+                    return;
+                }
+            }
+
+            // JSON 只保留运行节奏；机器人是否启用及下注范围严格读取数据库个人配置。
+            const MAX_POOL = Number(vBetConfig.MAX_POOL || 15);
+            const BAO_TYPES = rInfo.virtualBaoTypes || vBetConfig.BAO_TYPES || ['h','zd','xd','l','m'];
+            const rotateMinutes = Math.max(1, Number(rInfo.virtualRotateMinutes || vBetConfig.rotateMinutes || 180));
+            const rotateMs = rotateMinutes * 60 * 1000;
+            
+            // 读取间隔时间配置
+            const gapMin = Number(rInfo.virtualBotGapMinMs || (vBetConfig.defaultGapMs && vBetConfig.defaultGapMs.min) || 500);
+            const gapMax = Number(rInfo.virtualBotGapMaxMs || (vBetConfig.defaultGapMs && vBetConfig.defaultGapMs.max) || 4000);
+
+            // 读取时间段在线人数
+            const onlineCountRanges =  vBetConfig.onlineCountRanges
+
+            // 小工具
+            const rand = (a,b) => Math.floor(Math.random() * (b - a + 1)) + a;
+            const pickN = (arr,n) => { const a = arr.slice(); for (let i=a.length-1;i>0;i--){const j=rand(0,i);[a[i],a[j]]=[a[j],a[i]];} return a.slice(0,n); };
+            const stepRound = (v,step) => Math.max(step, Math.round(v/step)*step);
+            const sleep = ms => new Promise(res=>setTimeout(res,ms));
+
+            // 严格池：只有当前群已配置、已启用、且仍是虚拟玩家的机器人才能进入。
+            let res = await virtualBetDao.getEnabledBots({ group_nickname: rInfo.group_nickname });
+            let pool = (res && res.data) ? res.data.slice(0, MAX_POOL) : [];
+            if (!Array.isArray(pool) || pool.length === 0) {
+                console.warn(
+                    `[下注机器人] 没有可用配置，桌台=${rInfo.group_nickname}, ` +
+                    `daoErr=${res && res.err ? String(res.err) : '无'}`
+                );
+                return;
+            }
+            //console.log(`[下注机器人] 数据库启用配置数量=${pool.length}，桌台=${rInfo.group_nickname}`);
+
+            // 没有发送凭证的机器人即使启用也不能执行，避免占用在线人数名额。
+            pool = pool.filter(bot => {
+                const ready = Boolean(bot && bot.playername && virtualBet_token[bot.playername]);
+                if (!ready && bot && bot.playername) {
+                    console.warn(`[下注机器人] ${bot.playername} 已启用但缺少发送凭证`);
+                }
+                return ready;
+            });
+            if (pool.length === 0) {
+                console.warn(`[下注机器人] 配置均缺少发送凭证，桌台=${rInfo.group_nickname}`);
+                return;
+            }
+
+            // 数据库查询期间可能已经收到更新的开始图片；旧请求不能覆盖新会话。
+            if (String(room.roomInfo.startMsgId || '').trim() !== startMsgId ||
+                room.roomInfo.gameState !== GAMESTATE.BET) {
+                return;
+            }
+            if (room._virtualStartMsgId && compareMsgId(startMsgId, room._virtualStartMsgId) <= 0) {
+                return;
+            }
+
+            // 批次（按 rotateMs 保持不变）
+            if (!room._virtualBatch) room._virtualBatch = { key: 0, signature: '', bots: [] };
+            const batchKey = Math.floor(Date.now() / rotateMs);
+            const poolSignature = pool.map(bot => `${bot.userId}:${new Date(bot.updated_at).getTime()}`).join('|');
+            if (room._virtualBatch.key !== batchKey ||
+                room._virtualBatch.signature !== poolSignature ||
+                room._virtualBatch.bots.length === 0) {
+                const now = new Date();
+                let minCnt = 3, maxCnt = 7;
+                const m = now.getHours()*60 + now.getMinutes();
+                
+                // 🚀 核心优化 3：从 JSON 中精准提取数组对应的上下限 [min, max]
+                if (m >= (9*60+30) && m < (23*60)) { 
+                    // 白天 (09:30 - 23:00)
+                    minCnt = onlineCountRanges.day[0]; 
+                    maxCnt = onlineCountRanges.day[1]; 
+                } else if (m >= (2*60+30) && m < (9*60+30)) { 
+                    // 凌晨 (02:30 - 09:30)
+                    minCnt = onlineCountRanges.dawn[0]; 
+                    maxCnt = onlineCountRanges.dawn[1]; 
+                } else { 
+                    // 夜间 (23:00 - 02:30)
+                    minCnt = onlineCountRanges.night[0]; 
+                    maxCnt = onlineCountRanges.night[1]; 
+                }
+                console.log("当前机器人下注时间段:", m, "分钟, 期望人数范围:", minCnt, "-", maxCnt);
+                
+                // 随机出一个目标人数
+                let target = rand(minCnt, maxCnt);
+                
+                // 如果数据库里过滤出来的机器人数量不够期望人数，打印提示
+                if (target > pool.length) {
+                    console.warn(`[下注机器人提示] 当前时间段期望 ${target} 人，但当前房间机器人池只有 ${pool.length} 个，已降级为 ${pool.length} 人。`);
+                }
+
+                const finalCount = Math.min(pool.length, target);
+                room._virtualBatch.key = batchKey;
+                room._virtualBatch.signature = poolSignature;
+                room._virtualBatch.bots = pickN(pool, finalCount);
+            }
+            const activeBots = room._virtualBatch.bots;
+            // 数据库查询、锁等待和机器人筛选不应消耗下注调度窗口。
+            // 从机器人配置准备完成时开始计时，避免查询稍慢后所有机器人被静默跳过。
+            const roundStartedAt = Date.now();
+
+            // 机器人会话只认泡泡开始下注图片 msgId，不再依赖可能被修改靴局改变的 cc/jc。
+            const roundToken = {};
+            room._virtualStartMsgId = startMsgId;
+            room._virtualRoundRunning = true;
+            room._virtualRoundToken = roundToken;
+            const hasBetInCurrentSession = new Set();
+            const getInactiveReason = () => {
+                if (room._virtualRoundToken !== roundToken) return '本轮token已被替换或停止';
+                if (room._virtualStartMsgId !== startMsgId) {
+                    return `机器人会话msgId已变化(current=${room._virtualStartMsgId || '空'})`;
+                }
+                const currentStartMsgId = String(room.roomInfo.startMsgId || '').trim();
+                if (currentStartMsgId !== startMsgId) {
+                    return `房间开始图片msgId已变化(current=${currentStartMsgId || '空'})`;
+                }
+                const stopMsgId = String(room.roomInfo.lastStopMsgId || '').trim();
+                if (/^\d+$/.test(stopMsgId) && compareMsgId(stopMsgId, startMsgId) > 0) {
+                    return `已收到停止下注图片(stopMsgId=${stopMsgId})`;
+                }
+                if (room.roomInfo.gameState !== GAMESTATE.BET) {
+                    return `房间已非下注状态(state=${room.roomInfo.gameState})`;
+                }
+                return '';
+            };
+            const isCurrentRound = () => !getInactiveReason();
+            const waitUntil = async targetTime => {
+                while (Date.now() < targetTime) {
+                    if (!isCurrentRound()) return false;
+                    await sleep(Math.min(1000, targetTime - Date.now()));
+                }
+                return isCurrentRound();
+            };
+
+            // 窗口偏移处理
+            let startOffset = 8000, endOffset = 35000;
+            try { 
+                const id = Number(rInfo.Id) || 0; 
+                if (vBetConfig.defaultWindow) {
+                    const winConf = (id % 2 === 0) ? vBetConfig.defaultWindow.even : vBetConfig.defaultWindow.odd;
+                    if (winConf) {
+                        const configuredStartOffset = Number(winConf.startOffsetMs);
+                        const configuredEndOffset = Number(winConf.endOffsetMs);
+                        if (Number.isFinite(configuredStartOffset) && configuredStartOffset >= 0) {
+                            startOffset = configuredStartOffset;
+                        }
+                        if (Number.isFinite(configuredEndOffset) && configuredEndOffset >= 0) {
+                            endOffset = configuredEndOffset;
+                        }
+                    }
+                } else if (id % 2 === 0) { 
+                    startOffset = 10000; endOffset = 45000; 
+                } 
+            } catch(e) {}
+
+            // 按每个机器人的延迟时间排序，避免高延迟机器人阻塞低延迟机器人。
+            const scheduledBots = activeBots.slice().sort((a, b) =>
+                Number(a.start_delay_seconds || 0) - Number(b.start_delay_seconds || 0)
+            );
+
+            // 顺序下注流程
+            (async ()=>{
+                try{
+                    for (const bot of scheduledBots){
+                        if (!isCurrentRound()) break;
+                        if (hasBetInCurrentSession.has(bot.playername)) continue;
+
+                        const delaySeconds = Math.max(0, Number(bot.start_delay_seconds) || 0);
+                        // 大于 0 时表示从开注起的实际秒数，不再额外叠加默认起始偏移。
+                        // 0 保留原有默认窗口，避免未配置的机器人立即同时下注。
+                        const botStartOffset = delaySeconds > 0
+                            ? delaySeconds * 1000
+                            : startOffset;
+                        const botWindowDuration = Math.max(0, endOffset - startOffset);
+                        const botWindowStart = roundStartedAt + botStartOffset;
+                        const botWindowEnd = botWindowStart + botWindowDuration;
+                        if (!(await waitUntil(botWindowStart))) {
+                            break;
+                        }
+                       
+                        if (Date.now() > botWindowEnd) {
+                            continue;
+                        }
+
+                        const gap = rand(gapMin, gapMax);
+                        const remain = Math.max(0, botWindowEnd - Date.now());
+                        const delay = Math.min(gap, remain); 
+                        
+                        if (delay > 0) await sleep(delay);
+
+                        if (!isCurrentRound()) {
+                            break;
+                        }
+                        if (Date.now() > botWindowEnd) {
+                            continue;
+                        }
+
+                        // 生成命令
+                        const zxR = [Number(bot.zx_min), Number(bot.zx_max)];
+                        let zxAmtRaw = rand(zxR[0], zxR[1]);
+                        let zxAmt = zxR[1] <= 1000 ? stepRound(zxAmtRaw,50) : stepRound(zxAmtRaw,100);
+                        zxAmt = Math.max(zxR[0], Math.min(zxR[1], zxAmt));
+                        const sideMode = String(bot.bet_side_mode || 'random').toLowerCase();
+                        const betSide = sideMode === 'z' || sideMode === 'x'
+                            ? sideMode
+                            : (Math.random() < 0.5 ? 'z' : 'x');
+                        const cmds = [`${betSide}${zxAmt}`];
+
+                        // 其它玩法完全使用该机器人在当前群的个人配置。
+                        const otherProbability = Math.max(0, Math.min(100, Number(bot.other_probability) || 0)) / 100;
+                        if (Number(bot.other_enabled) === 1 && Math.random() < otherProbability){
+                            const bR = [Number(bot.other_min), Number(bot.other_max)];
+                            let amt = rand(bR[0], bR[1]);
+                            amt = Math.max(bR[0], Math.min(bR[1], Math.round(amt/10)*10));
+                            const configuredTypes = String(bot.other_types || '')
+                                .split(',')
+                                .map(type => type.trim())
+                                .filter(Boolean);
+                            const availableTypes = configuredTypes.length > 0 ? configuredTypes : BAO_TYPES;
+                            const baoType = availableTypes[rand(0, availableTypes.length-1)];
+                            cmds.push(`${baoType}${amt}`);
+                        }
+
+                        // 发送
+                        hasBetInCurrentSession.add(bot.playername);
+                        for (const cmd of cmds){
+                            if (!isCurrentRound() || room.roomInfo.gameState !== GAMESTATE.BET) break;
+                            try{
+                                const cfg = virtualBet_token[bot.playername] || null;
+                                const targetChatId = String(rInfo.chat_id || '').trim();
+                                if (!targetChatId) {
+                                    break;
+                                }
+                                if (cfg) {
+                                    const sendResult = await sendChat.sendTextMessage(cmd, targetChatId, cfg);
+                                }
+                            }catch(e){ console.error("virtualBet send err:", e); }
+                            await sleep(rand(0,1000));
+                        }
+                    }
+                }catch(e){ console.error("virtualBet flow err:", e); }
+                finally {
+                    if (isCurrentRound()) {
+                        room._virtualRoundRunning = false;
+                    }
+                }
+            })();
+
+        }catch(e){
+            console.error("virtualBet.start err:", e);
+        }
+    },
+
+    stop: function(room){
+        room._virtualRoundToken = null;
+        room._virtualRoundRunning = false;
+    }
+};

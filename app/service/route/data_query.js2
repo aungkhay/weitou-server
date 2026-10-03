@@ -1,0 +1,508 @@
+let express = require("express");
+let router = express.Router();
+let playerDao = require('../../dao/playerDao');
+let userDao = require('../../dao/userDao');
+let systemDao = require('../../dao/systemDao');
+let playerOptionDao =  require('../../dao/playerOptionDao');
+let pomelo = require("pomelo");
+let redlock = pomelo.app.get('redlock');
+const util = require('../../util/utils');
+let cache = require('../../dao/Cache');
+const moment = require('moment');
+const { calculateSpmInfo } = require('../../domain/sx/overSpm');
+
+
+// 按天按靴查询单个选手明细(查询单个选手当天所有靴的明细汇总)
+router.post('/player_details_query_by_shoe', async function(req, res) {  
+    try{                                             
+        let msg = req.body.data ? req.body.data : req.body;
+        await redlock.lock("player_details_query_by_shoe:" + msg.userId,2000);
+        
+        if(!msg.name){
+            return res.send({code:500,msg:"没有设置账号",data:null}); 
+        }
+
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        //if(msg.endTime)msg.endTime += " 23:59:59";
+
+        let row = await playerDao.playerDetailsQueryByShoe(msg);   
+        row = row.data;
+        if(row.length > 0){
+            msg.is_virtual = 0;  // is_contains_virtual 是否包含虚拟
+            if(typeof msg.is_contains_virtual === 'number' && msg.is_contains_virtual == 0){
+                let row2 = await playerDao.getPlayer(msg);   
+                row2 = row2.data; 
+                if(row2.length > 0){
+                    const playerNameSet = new Set(row2.map(item => item.playername));
+                    // 只保留row中username存在于playerNameSet中的记录
+                    row = row.filter(item => {
+                        const exists = playerNameSet.has(item.username);
+                        return exists;
+                    });
+                }
+            }
+        }
+        if(row){
+            return res.send({code:200,msg:"获取记录成功",data:row});  
+        }else{
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+    } catch (err) {
+        console.log("err:",JSON.stringify(err));
+        return res.send({code:500,msg:"服务器繁忙",data:null})
+    }
+})
+
+// 查询某天某靴某局的所有下注选手的明细
+router.post('/player_details_query_by_round', async function(req, res) { 
+    try{                                              
+        let msg = req.body.data ? req.body.data : req.body;
+        await redlock.lock("player_details_query_by_round:" + msg.userId,2000);
+        
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        //if(msg.endTime)msg.endTime += " 23:59:59";
+        
+        let row = await playerDao.playerDetailsQueryByRound(msg);   
+        row = row.data;
+        if(row){
+            return res.send({code:200,msg:"获取记录成功",data:row});  
+        }else{
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+    } catch (err) {
+        console.log("err:",JSON.stringify(err));
+        return res.send({code:500,msg:"服务器繁忙",data:null})
+    }
+})
+
+// 查询单个选手下注流水
+router.post('/bet_details_query_by_name', async function(req, res) { 
+    try{                                              
+        let msg = req.body.data ? req.body.data : req.body;
+        await redlock.lock("bet_details_query_by_name:" + msg.userId,2000);
+        
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        //if(msg.endTime)msg.endTime += " 23:59:59";
+
+        let row = await playerDao.betDetailsQueryByName(msg);   
+        row = row.data;
+        row = row.map (item =>{
+            let s = {};
+            s.nickname = item.userName;
+            s.shoe = item.cc + "-" + item.jc;
+            s.betMoney = item.xz,
+            s.bet_order = item.bet_order;
+            s.bet_format = item.bet_order;
+            s.bet_time = item.betTime ? util.transDate(item.betTime) : "";
+            s.result = item.kj;
+            s.profit = item.yl,
+            s.result_time = item.stime ? util.transDate(item.stime) : "";
+            s.result_status = item.kj && item.kj != "" ? "己结算": "未结算";
+            s.result_rawstring = item.xzmx;
+            s.before_bet_money = item.before_bet_ye;
+            s.raw_money = item.initial_amount;
+            return s;
+        })
+
+        if(row){
+            return res.send({code:200,msg:"获取记录成功",data:row});  
+        }else{
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+    } catch (err) {
+        console.log("err:",JSON.stringify(err));
+        return res.send({code:500,msg:"服务器繁忙",data:null})
+    }
+})
+
+router.post('/player_details_query', async function(req, res) { 
+    try{                                              
+        let msg = req.body.data ? req.body.data : req.body;
+        await redlock.lock("player_details_query:" + msg.userId,2000);
+        
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        let row = await playerDao.PlayerDetailsQuery(msg);   
+        row = row.data;
+        if(row){
+            return res.send({code:200,msg:"获取记录成功",data:row});  
+        }else{
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+    } catch (err) {
+        console.log("err:",JSON.stringify(err));
+        return res.send({code:500,msg:"服务器繁忙",data:null})
+    }
+})
+
+router.post('/get_player_bet_data', async function(req, res) {    
+    let msg = req.body.data ? req.body.data : req.body;
+    let lock =  await redlock.lock("get_player_bet_data:" + msg.userId,1000);
+    //try{                                           
+
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        let rInfo = await systemDao.getGroupPullDataSetup(msg);
+        if(!rInfo.data[0].statistics_date)rInfo.data[0].statistics_date = new Date();
+        msg.statistics_date = moment(rInfo.data[0].statistics_date).format('YYYY-MM-DD');
+        let stateRedisKey = rInfo.data[0].rType + "st:" + rInfo.data[0].Id;
+        let re = await cache.get(stateRedisKey);
+        if(!!re){
+            msg.shoe = re.cc ? re.cc : msg.shoe;
+            msg.round = re.jc ? re.jc : msg.round;
+        }
+
+        console.log("==============================获取投注表数据，场次局次：", msg.shoe, msg.round);
+
+        let row = await playerDao.getPlayerBetData(msg);   
+        row = row.data;
+        row = row.map (item =>{
+            let s = {};
+            s.name = item.userName;
+            s.bet_detail = {
+                bank:item.z,
+                tie:item.h,
+                player:item.x,
+                bankPair:item.zd,
+                playerPair:item.xd,
+                //lucky6:item.l,
+                l:item.l,
+                k:item.k,
+                lucky7:item.q,
+                perfect:item.m,
+                pair:item.d
+            }
+            return s;
+        })
+        if(row){
+            lock.unlock();
+            return res.send({code:200,msg:"获取记录成功",data:row});  
+        }else{
+            lock.unlock();
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+    // } catch (err) {
+    //     lock.unlock();
+    //     console.log("err:",JSON.stringify(err));
+    //     return res.send({code:500,msg:"服务器繁忙",data:null});
+    // }
+})
+
+router.post('/get_player_score_data', async function(req, res) {
+    let msg = req.body.data ? req.body.data : req.body;
+    let lock =  await redlock.lock("get_player_score_data:" + msg.userId,1000);
+    try{                      
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        let rInfo = await systemDao.getGroupPullDataSetup(msg);
+
+        let stateRedisKey = rInfo.data[0].rType + "st:" + rInfo.data[0].Id;
+        let re = await cache.get(stateRedisKey);
+        if(!!re){
+            msg.shoe = re.lastResultCc ? re.lastResultCc : msg.shoe;
+            msg.round = re.lastResultJc ? re.lastResultJc : msg.round;
+        }
+        if(!rInfo.data[0].statistics_date)rInfo.data[0].statistics_date = new Date();
+        msg.statistics_date = moment(rInfo.data[0].statistics_date).format('YYYY-MM-DD');
+
+        console.log(`==============获取分表数据，场次局次：${msg.shoe}, ${msg.round}, ${re.lastResultCc}, ${re.lastResultJc}`);
+        let row = await playerDao.getPlayerScoreData(msg);   
+        row = row.data;
+
+        if(row){
+            row.forEach(element => {
+                element.shoe = msg.shoe;
+                element.round = msg.round;
+            });
+            lock.unlock();
+            return res.send({code:200,msg:"获取记录成功",data:row});  
+        }else{
+            lock.unlock();
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+
+    } catch (err) {
+        lock.unlock();
+        console.log("err:",JSON.stringify(err));
+        return res.send({code:500,msg:"服务器繁忙",data:null});
+    }
+})
+
+// 获取桌子信息
+router.post('/get_desk_info', async function(req, res) {  
+    try{                      
+        let msg = req.body.data ? req.body.data : req.body;
+        await redlock.lock("get_desk_info:" + msg.userId,1000);
+        //let game = HG_TRANS.gameIdTransOwn(msg.desk_number);
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+        let game = await systemDao.getGroupPullDataSetup(msg);
+        if(game.data.length == 0){
+            return res.send({code:500,msg:"没有找到开工群昵称,请先设定",data:null}); 
+        }
+
+        msg.rType = "bjl";
+        msg.roomId = game.data[0].Id;
+        let rpc = pomelo.app.rpc; 
+        let gt = game.rType;
+        msg.gameId = game.data[0].Id;
+        let o = rpc.bjl.bjlRemote;
+        o.getRoomInfo(null,msg,function(result){
+            console.log("info：",result);
+            if(result.code != '500'){
+                let r = result.data;
+                r.gameStatus = Number(r.gameStatus)
+                let obj = {
+                    shoe: r.cc,
+                    round: r.jc,
+                    gameStatus: r.gameStatus,
+                    desk_number: r.gameId,
+                    betTime: r.betTime,
+                    gameHistory: r.gameHistory
+                }
+                return res.send({code:200,msg:"获取记录成功",data:obj});  
+            }else{
+                return res.send({code:500,msg:"获取记录失败",data:null});  
+            }
+        });
+      
+    } catch (err) {
+        console.log("err:",JSON.stringify(err));
+        return res.send({code:500,msg:"服务器繁忙",data:null});
+    }
+})
+
+// 获取台桌筹码
+router.post('/get_table_chips', async function(req, res) {  
+    try{                      
+        let msg = req.body.data ? req.body.data : req.body;
+        await redlock.lock("get_table_chips:" + msg.userId,2000);
+        
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        //if(msg.endTime)msg.endTime += " 23:59:59"; 
+
+        let row = await systemDao.getGroupPullDataSetup(msg);   
+        row = row.data;
+        let data = { table_chips: row[0] ? row[0].table_chips : 0 };
+        if(row){
+            return res.send({code:200,msg:"获取记录成功",data:data});  
+        }else{
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+    } catch (err) {
+        console.log("err:",JSON.stringify(err));
+        return res.send({code:500,msg:"服务器繁忙",data:null})
+    }
+})
+
+// 获取台桌筹码
+router.post('/get_bet_area', async function(req, res) {  
+    try{                      
+        let msg = req.body.data ? req.body.data : req.body;
+        await redlock.lock("get_bet_area:" + msg.userId,2000);
+        
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        let row = await systemDao.getParameter(msg);   
+        row = row.data;
+        if(row && row.length > 0){
+            let data ={
+                enable_Lucky_6: row[0].enable_Lucky_6 ?? 0,
+                enable_perfect_pairs: row[0].enable_perfect_pairs ?? 0,
+                enable_any_pairs: row[0].enable_any_pairs ?? 0,
+                enable_Lucky_7: row[0].enable_Lucky_7 ?? 0
+            }
+            return res.send({code:200,msg:"获取记录成功",data:data});  
+        }else{
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+    } catch (err) {
+        console.log("err:",JSON.stringify(err));
+        return res.send({code:500,msg:"服务器繁忙",data:null})
+    }
+})
+
+router.post('/get_remaining_score_summary', async function(req, res) {  
+    try{                      
+        let msg = req.body.data ? req.body.data : req.body;
+        await redlock.lock("get_remaining_score_summary:" + msg.userId,1000);
+        
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        //let row = await playerDao.getRemainingScoreSummary(msg);  
+        let row = await playerDao.getCombinedStatistics(msg); 
+        row = row.data;
+        if(row){
+            return res.send({code:200,msg:"获取记录成功",data:row});  
+        }else{
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+    } catch (err) {
+        console.log("err:",JSON.stringify(err));
+        return res.send({code:500,msg:"服务器繁忙",data:null})
+    }
+})
+
+// 三宝占成统计-按靴查询明细
+router.post('/statistics_sb_percentage_by_shoe', async function(req, res) {  
+    try{                      
+        let msg = req.body.data ? req.body.data : req.body;
+        await redlock.lock("statistics_sb_percentage_by_shoe:" + msg.userId,2000);
+        
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        //if(msg.endTime)msg.endTime += " 23:59:59";
+
+        let row = await playerDao.statisticsSbPercentageByShoe(msg);   
+        row = row.data;
+        if(row){
+            row.player_win = 0;
+            row.company_win = 0;
+            return res.send({code:200,msg:"获取记录成功",data:row});  
+        }else{
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+    } catch (err) {
+        console.log("err:",JSON.stringify(err));
+        return res.send({code:500,msg:"服务器繁忙",data:null});
+    }
+})
+
+router.post('/get_profit_info', async function(req, res) { 
+    let msg = req.body.data ? req.body.data : req.body;
+    let lock = await redlock.lock("get_profit_info:" + msg.userId,1000);
+    try{                      
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            lock.unlock();
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        let groupInfo = await systemDao.getStatisticsDateByAnyGroup();
+        if(groupInfo.data){
+            msg.statistics_date = moment(groupInfo.data.statistics_date).format('YYYY-MM-DD');
+        }else{
+            lock.unlock();
+            return res.send({code:500,msg:"还没有开始统计",data:null}); 
+        }
+            
+        let row = await playerOptionDao.getCombinedStatistics(msg);
+        row = row.data;
+        //row[0].zyk = row[0].sblyk + row[0].ltyk + row[0].dcyk + row[0].gyk ;
+        if(row){
+            lock.unlock();
+            return res.send({code:200,msg:"获取记录成功",data:row});  
+        }else{
+            lock.unlock();
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+    } catch (err) {
+        console.log("err:",JSON.stringify(err));
+        lock.unlock();
+        return res.send({code:500,msg:"服务器繁忙",data:null});
+    }
+})
+
+router.post('/get_statistics_date', async function(req, res) {  
+    try{                      
+        let msg = req.body.data ? req.body.data : req.body;
+        await redlock.lock("get_statistics_date:" + msg.userId,1000);
+        
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null}); 
+        }
+
+        let row = await systemDao.getGroupPullDataSetup(msg);
+        row = row.data;
+        if(row.length > 0){
+            return res.send({code:200,msg:"获取记录成功",data:moment(row[0].statistics_date).format('YYYY-MM-DD')});  
+        }else{
+            return res.send({code:500,msg:"获取记录失败",data:null});  
+        }
+    } catch (err) {
+        console.log("err:",JSON.stringify(err));
+        return res.send({code:500,msg:"服务器繁忙",data:null});
+    }
+})
+
+router.post('/get_spm_info', async function(req, res) {
+    //try {
+        let msg = req.body.data ? req.body.data : req.body;
+        await redlock.lock("get_spm_info:" + msg.userId,1000);
+
+        if(!msg.group_nickname || msg.group_nickname == ""){
+            return res.send({code:500,msg:"没有提供开工群昵称",data:null});
+        }
+        let parameter_setup = await systemDao.getParameter(msg);
+        if(parameter_setup.data && parameter_setup.data.length > 0){
+            parameter_setup = parameter_setup.data[0];
+        }
+
+        let groupInfo = await systemDao.getGroupPullDataSetup(msg);
+        if(groupInfo.data && groupInfo.data.length > 0){
+            groupInfo = groupInfo.data[0];
+            msg.statistics_date = moment(groupInfo.statistics_date).format('YYYY-MM-DD');
+
+            let stateRedisKey = groupInfo.rType + "st:" + groupInfo.Id;
+            let re = await cache.get(stateRedisKey);
+            if(!!re){
+                msg.cc = re.cc ? re.cc : msg.shoe;
+                msg.jc = re.jc ? re.jc : msg.round;
+            }
+            msg.is_re_settlement = false;
+        }
+
+        // 调用 DAO 并取出 data 数组
+        console.log("获取上盘买信息，参数：", msg);
+        let daoRes = await userDao.getJcTotal(msg);
+        let rows = (daoRes && daoRes.data) ? daoRes.data : [];
+        if (rows.length === 0) {
+            return res.send({code:500,msg:"没有找到结算数据",data:null});
+        }
+
+        // 取第一条数据为 r
+        let r = rows[0];
+
+        // 与停止下注减持共用同一套最终 spm/sp 算法。
+        const spmInfo = calculateSpmInfo(r, parameter_setup);
+        r.spm = spmInfo.spm;
+        r.sp = spmInfo.sp;
+        r.lt = spmInfo.smallChange;
+
+        let data = {
+            spm: r.spm,
+            value: r.sp
+        };
+
+        return res.send({code:200,msg:"获取记录成功",data:data});
+    // } catch (err) {
+    //     console.log("err:",JSON.stringify(err));
+    //     return res.send({code:500,msg:"服务器繁忙",data:null});
+    // }
+});
+// ...existing code...
+module.exports = router;

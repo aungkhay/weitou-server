@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <input type="file" onchange="up(this)">
+</body>
+<script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+<script>
+    function up(e) {
+        let form = new FormData();
+        form.append('file', e.files[0]);
+        axios({
+                method: 'post',
+                url: 'https://xxx/xxx',
+                data: form
+            })
+    }
+</script>
+</html>
